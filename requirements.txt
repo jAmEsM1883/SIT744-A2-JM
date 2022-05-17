@@ -4,3 +4,4 @@ numpy
 Pillow
 tensorflow
 google-cloud-storage
+pathlib
