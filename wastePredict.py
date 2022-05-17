@@ -26,6 +26,7 @@
 # Pillow
 # tensorflow
 # google-cloud-storage
+# pathlib
 #
 ###############################################################################
 
@@ -33,6 +34,7 @@
 import os
 import tempfile
 import PIL.Image as Image
+import pathlib
 
 # Import Python ML/DL libraries.
 import numpy as np
@@ -43,7 +45,7 @@ from tensorflow import keras
 from werkzeug.utils import secure_filename
 from google.cloud import storage
 
-# Use a global variable for the model to reduce the reloading of the model.
+# Use a global variable for the model to reduce continually reloading of the model.
 model = None
 
 def getFilePath(filename):
@@ -61,7 +63,7 @@ def getFilePath(filename):
 
 def processPredict(request):
     """
-    Uses a pre-trained TensorFlow model to predict the target class of a user supplied image.
+    Use a pre-trained TensorFlow model to predict the target class of a user supplied image.
 
     Args:
         request: Flask.Request object from the assigments HTML page in Cloud Storage.
@@ -75,32 +77,48 @@ def processPredict(request):
     predictionClasses = ['non-recyclable', 'recyclable']
     predictionDecision = "Error - Prediction Failure" # Default value
     imageShape = (180, 180)
-    downloadBucketFiles = ['task2-m1-20220515-202340/keras_metadata.pb', 'task2-m1-20220515-202340/saved_model.pb', 'task2-m1-20220515-202340/variables/variables.data-00000-of-00001', 'task2-m1-20220515-202340/variables/variables.index']
-    downloadLocalFiles = ['/tmp/keras_metadata.pb', '/tmp/saved_model.pb', '/tmp/variables/variables.data-00000-of-00001', '/tmp/variables/variables.index'] 
-    
+#    downloadBucketFiles = ['task2-m1-20220515-202340/keras_metadata.pb', 'task2-m1-20220515-202340/saved_model.pb', 'task2-m1-20220515-202340/variables/variables.data-00000-of-00001', 'task2-m1-20220515-202340/variables/variables.index']
+#    downloadLocalFiles = ['/tmp/keras_metadata.pb', '/tmp/saved_model.pb', '/tmp/variables/variables.data-00000-of-00001', '/tmp/variables/variables.index'] 
 
     # Connect to the Google Cloud Storage Bucket for this assignment and retrieve the model.
     bucketName = "sit744-bucket-jm"
-    try:
-        print('Getting files from Cloud Storage Bucket')
-        storageClient = storage.Client()
-        bucket = storageClient.get_bucket(bucketName)
-        print('Connected to bucket ' + bucketName)
-        for i in range(len(downloadBucketFiles)):
-            print(f'Downloading {downloadBucketFiles[i]}')
-            blob = bucket.blob(downloadBucketFiles[i])
-            blob.download_to_filename(downloadLocalFiles[i])
-            print(f'Downloaded {downloadLocalFiles[i]}')
-    except Exception as e:
-        print("Exception during file download " + str(repr(e)))
+
+    print('Getting files from Cloud Storage Bucket')
+    storageClient = storage.Client()
+    bucket = storageClient.bucket(bucketName)
+    print('Connected to bucket ' + bucketName)
+    blobs = storageClient.list_blobs(bucketName)
+    tempDir = tempfile.gettempdir()
+    for blob in blobs:
+        print(f'{blob.name}')
+        (top, tail) = os.path.split(blob.name)
+        if len(top) != 0:
+            try:
+                newDir = os.path.join(tempDir, top)
+                pathlib.Path(newDir).mkdir(parents = True, exist_ok = True)
+            except Exception as e:
+                print(f'Directory {newDir} already exists. ' + str(repr(e)))
+            else:
+                print(f'Created directory {newDir}')
+        print(f'Downloading {blob.name}')
+        currentBlob = bucket.blob(blob.name)
+        try:
+            fullFileName = os.path.join(tempDir, blob.name)
+            currentBlob.download_to_filename(fullFileName)
+        except Exception as e:
+            print(f'EXC downloading blob failed {str(repr(e))} {fullFileName}')
+        else:
+            print(f'Downloaded {blob.name}')
 
     # Load the model
-    model = "/tmp"
+    model = "task2-m1-20220515-202340"
+    fullModel = os.path.join(tempDir, model)
     try:
-        model = tf.keras.models.load_model(model)
+        model = tf.keras.models.load_model(fullModel)
     except Exception as e:
-        print("Model loading failed " + str(repr(e))+ ".")
-    print("Model loading succeeded.")
+        print("Model loading failed " + str(repr(e))+ ". " + fullModel)
+    else:
+        print("Model loading succeeded. " + fullModel)
 
     # Non-file fields from the form aren't expected and will be ignored.
     # request.form.to_dict()
@@ -115,8 +133,11 @@ def processPredict(request):
             testImage = Image.open(getFilePath(fileName)).resize(imageShape)
             testImage = np.array(testImage)[np.newaxis, ...] # Convert image to a numpy array and put it within a batch.
             logits = model.predict(testImage)
+            print(f"Prediction complete {logits}")
             prediction = tf.nn.sigmoid(logits[0]) # Perform sigmoid activation for binary classification.
-            predictedClass = np.rint(prediction) # Round up or down to determine the predicted class.
+            print(f"Activation complete {prediction}")
+            predictedClass = int(np.rint(prediction)) # Round up or down to determine the predicted class.
+            print(f"Class determined {predictedClass}")
             predictionDecision = predictionClasses[predictedClass]
             print(f'Image {fileName} logits {logits} prediction {prediction} predictedClass {predictedClass} className {classNames[int(predictedClass)]}')
         except Exception as e:
